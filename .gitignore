@@ -1,0 +1,24 @@
+# Credenciais e segredos locais (NÃO ENVIE PARA O GITHUB PÚBLICO)
+credentials/
+service_account.json
+*.json # Se tiver outros arquivos .json de credenciais
+.streamlit/secrets.toml # Arquivo de segredos local do Streamlit
+
+# Python cache e arquivos compilados
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.egg-info/
+
+# Ambientes virtuais
+env/
+venv/
+.env
+.venv
+
+# Arquivos de sistema operacional e IDE
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
