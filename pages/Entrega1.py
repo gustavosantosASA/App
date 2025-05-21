@@ -1,35 +1,11 @@
 import streamlit as st
 import pandas as pd
-import io
-import re
-import sys # Standard library
-import os  # Standard library
-
-# --- Adjust sys.path to ensure utils module is found ---
-# This assumes the 'pages' directory is directly under the project root,
-# and 'utils' is also directly under the project root.
-try:
-    # Get the absolute path of the directory containing the current script (pages/)
-    current_script_dir = os.path.dirname(os.path.abspath(__file__))
-    # Get the project root directory (one level up from pages/)
-    project_root = os.path.dirname(current_script_dir)
-    # Add the project root to the Python path if it's not already there
-    if project_root not in sys.path:
-        sys.path.insert(0, project_root)
-except NameError:
-    # __file__ might not be defined in some contexts (e.g., interactive interpreter)
-    # For Streamlit page scripts, __file__ should typically be available.
-    # If running into issues here in a specific environment, this part might need adjustment.
-    pass
-
-# --- Local application imports ---
 from utils.google_sheets import read_sheet_to_dataframe, update_cell_in_sheet # Funções do seu módulo utils
-
-# --- Third-party imports for Google APIs ---
 from googleapiclient.discovery import build # Para Google Drive
 from googleapiclient.http import MediaIoBaseUpload # Para Google Drive
 from oauth2client.service_account import ServiceAccountCredentials # Para Google Drive
-
+import io
+import re
 
 # --- Constantes Específicas da Entrega ---
 ENTREGA_NUM = 1
@@ -40,21 +16,9 @@ PAGE_TITLE = f"📝 Gerenciar {ENTREGA_NUM}ª Entrega"
 # --- Constantes Globais (podem vir de um config ou serem repetidas) ---
 SPREADSHEET_URL = "https://docs.google.com/spreadsheets/d/1VZpV97NIhd16jAyzMpVE_8VhSs-bSqi4DXmySsx2Kc4/edit#gid=761491838" # URL base da planilha
 WORKSHEET_CRONOGRAMA_NAME = "Cronograma"
-# WORKSHEET_METAS_NAME = "Metas" # Removido, pois os dados estão no Cronograma
+WORKSHEET_METAS_NAME = "Metas" # Nome da nova aba com detalhes das metas
 GOOGLE_DRIVE_FOLDER_ID = '1g-pnfUQV70C7cs5UjWtnRHkfIAYT959t' # SEU ID DA PASTA NO DRIVE AQUI
-# KEY_COLUMN_METAS = "Descrição Meta" # Removido, não é mais necessário para cruzar abas
-
-# !!! IMPORTANTE: ATUALIZE ESTA LISTA COM OS NOMES REAIS DAS SUAS COLUNAS AP ATÉ BN !!!
-# Estes são placeholders. A ordem e os nomes devem corresponder à sua planilha "Cronograma".
-COLUMNS_TO_DISPLAY_FROM_CRONOGRAMA = [
-    "U.M.", "Operador", "Meta", "%PPR", "Operador 1",
-   "Meta 1", "%PPR 1", "Operador 2", "Meta 2", "%PPR 2",
-    "Operador 3", "Meta 3", "%PPR 3", "Operador 4", "Meta 4",
-    "%PPR 4", "Operador 5", "Meta 5", "%PPR 5", "Operador 6",
-    "Meta 6", "%PPR 6", "Operador 7", "Meta 7", "%PPR 7"
-    # Adicione ou remova conforme o número exato de colunas entre AP e BN
-]
-
+KEY_COLUMN_METAS = "Descrição Meta" # Coluna chave para ligar Cronograma e Metas
 
 # --- Estilos CSS para a Página de Entrega ---
 st.markdown("""
@@ -64,6 +28,7 @@ st.markdown("""
         
         .page-header { 
             font-size: 2rem; font-weight: 700; color: #004D40; margin-bottom: 0.5rem; 
+            /* border-bottom: 2px solid #E0E0E0; padding-bottom: 0.5rem; */
         }
         .back-button-col { display: flex; align-items: center; justify-content: flex-end; }
         .back-button-col .stButton>button {
@@ -96,30 +61,7 @@ st.markdown("""
         .preview-iframe { border: 1px solid #E0E0E0; border-radius: 8px; min-height: 500px; }
         .meta-info p { margin-bottom: 0.3rem; font-size: 0.95rem; }
         .meta-info strong { color: #004D40; }
-        /* .meta-detail { margin-left: 10px; border-left: 2px solid #004D40; padding-left: 10px; margin-top: 5px;} */ /* Removido pois não há mais a seção de detalhes da aba Metas */
-
-        .cronograma-extra-info-section {
-            background-color: #E8F5E9; /* Um fundo verde bem claro */
-            padding: 1rem;
-            border-radius: 8px;
-            margin-top: 1rem;
-            margin-bottom: 1.5rem;
-            border: 1px solid #C8E6C9;
-        }
-        .cronograma-extra-info-section h4 {
-            color: #004D40;
-            font-size: 1.1rem;
-            margin-top: 0;
-            margin-bottom: 0.75rem;
-        }
-        .cronograma-extra-info-section p {
-            font-size: 0.9rem;
-            color: #333;
-            margin-bottom: 0.25rem;
-        }
-         .cronograma-extra-info-section strong {
-            color: #1B5E20; /* Um verde um pouco mais escuro para o label */
-        }
+        .meta-detail { margin-left: 10px; border-left: 2px solid #004D40; padding-left: 10px; margin-top: 5px;}
 
     </style>
 """, unsafe_allow_html=True)
@@ -155,17 +97,22 @@ if "selected_row_index" not in st.session_state:
     if st.button("⬅️ Voltar para o Painel"): st.switch_page("app.py")
     st.stop()
 
-# --- Carregamento de Dados da Linha Selecionada (Apenas Cronograma) ---
-@st.cache_data(ttl=300) # Cache para os dados da planilha
-def load_cronograma_data(sheet_url, worksheet_name_cronograma):
+# --- Carregamento de Dados da Linha Selecionada (Cronograma e Metas) ---
+@st.cache_data(ttl=300) # Cache para os dados das planilhas
+def load_sheet_data(sheet_url, worksheet_name_cronograma, worksheet_name_metas):
     df_cronograma = read_sheet_to_dataframe(sheet_url, worksheet_name_cronograma)
-    return df_cronograma
+    df_metas = read_sheet_to_dataframe(sheet_url, worksheet_name_metas)
+    return df_cronograma, df_metas
 
-df_all_cronograma = load_cronograma_data(SPREADSHEET_URL, WORKSHEET_CRONOGRAMA_NAME)
+df_all_cronograma, df_all_metas = load_sheet_data(SPREADSHEET_URL, WORKSHEET_CRONOGRAMA_NAME, WORKSHEET_METAS_NAME)
 
 if df_all_cronograma is None or df_all_cronograma.empty:
     st.error("Não foi possível carregar os dados da aba 'Cronograma'. Verifique as configurações.")
     st.stop()
+# Não paramos se df_all_metas for None, apenas avisamos e continuamos sem os detalhes da meta.
+if df_all_metas is None:
+    st.warning(f"Não foi possível carregar os dados da aba '{WORKSHEET_METAS_NAME}'. Detalhes adicionais da meta podem não ser exibidos.")
+    df_all_metas = pd.DataFrame() # Cria um DataFrame vazio para evitar erros posteriores
 
 selected_idx = st.session_state.selected_row_index
 if selected_idx >= len(df_all_cronograma):
@@ -181,48 +128,52 @@ with header_cols[0]:
     st.markdown(f"<div class='page-header'>{PAGE_TITLE}</div>", unsafe_allow_html=True)
 with header_cols[1]:
     st.markdown("<div class='back-button-col'>", unsafe_allow_html=True)
-    if st.button("⬅️ Voltar ao Painel", key=f"back_to_app_entrega{ENTREGA_NUM}"): 
+    if st.button("⬅️ Voltar ao Painel", key=f"back_to_app_entrega{ENTREGA_NUM}"): # Chave única para o botão
         st.switch_page("app.py")
     st.markdown("</div>", unsafe_allow_html=True)
 
-# --- SEÇÃO: Exibição de Dados das Colunas AP-BN da Aba Cronograma ---
-# Esta seção agora contém todos os detalhes da meta que estão no cronograma.
+
+# --- Seção de Informações da Meta (Cronograma + Detalhes da Aba Metas) ---
 with st.container():
-    st.markdown("<div class='cronograma-extra-info-section'>", unsafe_allow_html=True)
-    st.markdown("<h4>Detalhes da Meta (Conforme Aba Cronograma)</h4>", unsafe_allow_html=True) # Título ajustado
+    st.markdown("<div class='content-section'>", unsafe_allow_html=True)
+    st.markdown("<h3>🎯 Informações da Meta</h3>", unsafe_allow_html=True)
     
-    # Exibe primeiro as informações básicas da meta (Descrição, Referência, Setor, Responsável)
+    # Informações da Aba Cronograma
     st.markdown(f"""
-        <div class='meta-info' style="margin-bottom: 10px; padding-bottom:10px; border-bottom: 1px dashed #C8E6C9;">
-            <p><strong>Descrição da Meta:</strong> {row_data_cronograma.get('Descrição Meta', 'N/A')}</p>
+        <div class='meta-info'>
+            <p><strong>Descrição da Meta (Cronograma):</strong> {row_data_cronograma.get(KEY_COLUMN_METAS, 'N/A')}</p>
             <p><strong>Referência:</strong> {row_data_cronograma.get('Referência', 'N/A')}</p>
             <p><strong>Setor:</strong> {row_data_cronograma.get('Setor', 'N/A')}</p>
-            <p><strong>Responsável:</strong> {row_data_cronograma.get('Responsável', 'N/A')}</p>
+            <p><strong>Responsável (Cronograma):</strong> {row_data_cronograma.get('Responsável', 'N/A')}</p>
         </div>
     """, unsafe_allow_html=True)
-    
-    # Agora exibe as colunas de AP a BN
-    valid_cols_to_display = [col for col in COLUMNS_TO_DISPLAY_FROM_CRONOGRAMA if col in row_data_cronograma]
-    
-    if not valid_cols_to_display:
-        st.info("Nenhuma das colunas de detalhe da meta (AP-BN) foi encontrada nos dados do cronograma ou a lista de colunas precisa ser atualizada no script.")
-    else:
-        num_display_cols = 3 
-        data_cols = st.columns(num_display_cols)
-        col_idx = 0
-        for col_name in valid_cols_to_display:
-            with data_cols[col_idx % num_display_cols]:
-                value = row_data_cronograma.get(col_name, "N/D") 
-                display_col_name = col_name.replace("Nome Coluna ", "") # Remove placeholder prefix
-                st.markdown(f"<p><strong>{display_col_name}:</strong> {value}</p>", unsafe_allow_html=True)
-            col_idx += 1
-            
-    st.markdown("</div>", unsafe_allow_html=True)
 
-# --- Seção de Informações da Meta Principal (REMOVIDA/SIMPLIFICADA) ---
-# A seção anterior ".cronograma-extra-info-section" agora cobre todos os detalhes da meta
-# que estão na aba "Cronograma". Não precisamos mais de uma seção separada para "Meta Principal"
-# nem de buscar dados da aba "Metas".
+    # Buscar e exibir informações da Aba Metas
+    descricao_meta_selecionada = row_data_cronograma.get(KEY_COLUMN_METAS)
+    if descricao_meta_selecionada and not df_all_metas.empty and KEY_COLUMN_METAS in df_all_metas.columns:
+        # Garante que a comparação seja feita com strings e lide com NaNs
+        meta_details_row = df_all_metas[df_all_metas[KEY_COLUMN_METAS].astype(str).str.strip() == str(descricao_meta_selecionada).strip()]
+        if not meta_details_row.empty:
+            meta_detail = meta_details_row.iloc[0]
+            st.markdown("<h4 style='color: #004D40; font-size: 1.1rem; margin-top: 1rem; margin-bottom: 0.5rem;'>Detalhes Adicionais da Meta (da aba 'Metas'):</h4>", unsafe_allow_html=True)
+            # Adapte os nomes das colunas conforme sua aba 'Metas'
+            st.markdown(f"""
+                <div class='meta-info meta-detail'>
+                    <p><strong>Peso da Meta:</strong> {meta_detail.get('Peso da Meta', 'N/A')}</p>
+                    <p><strong>Indicador:</strong> {meta_detail.get('Indicador', 'N/A')}</p>
+                    <p><strong>Tipo de Meta:</strong> {meta_detail.get('Tipo de Meta', 'N/A')}</p>
+                    <p><strong>Observações da Meta:</strong> {meta_detail.get('Observações da Meta', 'N/A')}</p>
+                    {f"<p><strong>Unidade de Medida:</strong> {meta_detail.get('Unidade de Medida', 'N/A')}</p>" if 'Unidade de Medida' in meta_detail else ''}
+                    {f"<p><strong>Fonte de Dados:</strong> {meta_detail.get('Fonte de Dados', 'N/A')}</p>" if 'Fonte de Dados' in meta_detail else ''}
+                </div>
+            """, unsafe_allow_html=True)
+        else:
+            st.info(f"Nenhum detalhe adicional encontrado na aba '{WORKSHEET_METAS_NAME}' para a meta: '{descricao_meta_selecionada}'.")
+    elif not df_all_metas.empty and KEY_COLUMN_METAS not in df_all_metas.columns:
+         st.warning(f"A coluna chave '{KEY_COLUMN_METAS}' não foi encontrada na aba '{WORKSHEET_METAS_NAME}'. Não é possível buscar detalhes adicionais.")
+
+
+    st.markdown("</div>", unsafe_allow_html=True)
 
 
 # --- Seção de Edição da Avaliação ---
@@ -237,7 +188,7 @@ with st.container():
         if submitted_avaliacao:
             if update_cell_in_sheet(SPREADSHEET_URL, WORKSHEET_CRONOGRAMA_NAME, df_all_cronograma, selected_idx, AVALIACAO_COL_NAME, new_avaliacao):
                 st.success(f"Avaliação da {ENTREGA_NUM}ª Entrega atualizada com sucesso!")
-                st.cache_data.clear() 
+                st.cache_data.clear() # Limpa o cache para forçar o recarregamento dos dados da planilha
                 st.rerun() 
             else:
                 st.error(f"Falha ao atualizar a avaliação da {ENTREGA_NUM}ª Entrega.")
@@ -276,7 +227,7 @@ with st.container():
                 if update_cell_in_sheet(SPREADSHEET_URL, WORKSHEET_CRONOGRAMA_NAME, df_all_cronograma, selected_idx, DOC_COL_NAME, gdrive_link):
                     st.success(f"Documento '{uploaded_file_st.name}' enviado com sucesso! Link atualizado na planilha.")
                     st.markdown(f"**Link do arquivo:** [{gdrive_link}]({gdrive_link})")
-                    st.cache_data.clear() 
+                    st.cache_data.clear() # Limpa o cache para forçar o recarregamento dos dados da planilha
                     st.rerun()
                 else:
                     st.error("Documento enviado para o Drive, mas falha ao atualizar o link na planilha.")
