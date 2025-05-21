@@ -124,6 +124,7 @@ st.markdown("""
             background-color: #E8F5E9; /* Fundo do cabeçalho da tabela */
             color: #004D40; /* Cor do texto do cabeçalho */
             font-weight: 600;
+            text-align: left; /* Alinha cabeçalhos à esquerda */
         }
          .meta-info-basic {
             margin-bottom: 10px; 
@@ -210,31 +211,26 @@ with st.container():
         </div>
     """, unsafe_allow_html=True)
     
-    # Agora exibe as colunas de AP a BN como um DataFrame
+    # Agora exibe as colunas de AP a BN como um DataFrame de uma única linha
     # Filtra as colunas que realmente existem no row_data_cronograma para evitar KeyErrors
     cols_to_show_in_df = [col for col in COLUMNS_TO_DISPLAY_FROM_CRONOGRAMA if col in row_data_cronograma.index]
     
     if not cols_to_show_in_df:
         st.info("Nenhuma das colunas de detalhe da meta (AP-BN) foi encontrada nos dados do cronograma ou a lista de colunas precisa ser atualizada no script.")
     else:
-        # Cria um DataFrame com os dados das colunas selecionadas para a linha atual
-        # Transpõe o DataFrame para ter "Nome da Coluna" e "Valor"
-        details_df = pd.DataFrame(row_data_cronograma[cols_to_show_in_df]).transpose()
-        
-        # Renomeia as colunas do DataFrame transposto para melhor clareza se necessário,
-        # ou pode-se simplesmente exibir como está.
-        # Para uma melhor visualização de chave-valor, podemos reformatar:
-        
-        # Reformata para um DataFrame de duas colunas: "Campo" e "Valor"
-        display_data = []
+        # Cria um dicionário para os dados da linha única
+        single_row_data_dict = {}
         for col_name in cols_to_show_in_df:
-            display_col_name = col_name.replace("Nome Coluna ", "") # Remove placeholder prefix
-            display_data.append({"Campo": display_col_name, "Valor": row_data_cronograma.get(col_name, "N/D")})
+            # Usa o nome da coluna original como chave no dicionário
+            # O valor é obtido da linha de dados do cronograma
+            single_row_data_dict[col_name] = row_data_cronograma.get(col_name, "N/D")
         
-        if display_data:
-            details_display_df = pd.DataFrame(display_data)
-            st.dataframe(details_display_df, use_container_width=True, hide_index=True)
+        if single_row_data_dict:
+            # Cria o DataFrame a partir do dicionário, envolvendo-o em uma lista para criar uma única linha
+            details_df_single_row = pd.DataFrame([single_row_data_dict])
+            st.dataframe(details_df_single_row, use_container_width=True, hide_index=True)
         else:
+            # Este caso é improvável se cols_to_show_in_df não estiver vazio, mas é uma salvaguarda
             st.info("Não há dados para exibir nas colunas AP-BN para esta meta.")
             
     st.markdown("</div>", unsafe_allow_html=True)
