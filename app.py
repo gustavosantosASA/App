@@ -220,11 +220,11 @@ if df is not None:
             with st.container():
                 st.markdown("<div class='card'>", unsafe_allow_html=True)
                 
-                cols_header = st.columns([4, 1, 1, 1, 1, 1, 1])
+                cols_header = st.columns([3, 1, 1, 1, 1, 1, 1])
                 with cols_header[0]:
                     st.markdown(f"<div class='subheader-style'>📑 {row['Descrição Meta']}</div>", unsafe_allow_html=True)
                 
-                cols_content = st.columns([4, 1, 1, 1, 1, 1, 1])
+                cols_content = st.columns([3, 1, 1, 1, 1, 1, 1])
                 
                 with cols_content[0]:
                     st.markdown(f"""
