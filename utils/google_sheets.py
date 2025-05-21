@@ -20,14 +20,16 @@ def get_gspread_client():
             return client
         except Exception as e:
             st.error(f"Erro ao autorizar o cliente gspread com st.secrets: {e}")
-            st.stop() # Impede a continuação se a autorização falhar
+            return None # Retornar None em caso de falha na autorização
     else:
         st.error("Credenciais da Conta de Serviço GCP (gcp_service_account) não encontradas nos Segredos do Streamlit.")
-        st.stop() # Impede a continuação se as credenciais não estiverem configuradas
+        return None # Retornar None
 
 def get_google_sheet_by_url(url):
     """Conecta ao Google Sheets usando a URL e retorna a planilha (objeto Spreadsheet)"""
     client = get_gspread_client()
+    if not client:
+        return None # Cliente não autorizado
     try:
         sheet = client.open_by_url(url)
         return sheet
@@ -59,21 +61,33 @@ def read_sheet_to_dataframe(spreadsheet_url, worksheet_name):
     """
     worksheet = get_worksheet(spreadsheet_url, worksheet_name)
     if not worksheet:
-        # A mensagem de erro/aviso já foi dada por get_worksheet
-        return None # Retorna None para indicar falha no carregamento
+        return None # Falha no carregamento, mensagem já dada
 
     try:
         data = worksheet.get_all_values()
         if not data:
-            st.info(f"A aba '{worksheet_name}' na planilha {spreadsheet_url} parece estar vazia.")
-            return pd.DataFrame() # Retorna DataFrame vazio se não houver dados
+            return pd.DataFrame() 
         
         headers = data[0]
         rows = data[1:]
-        # Validação para evitar erro se não houver linhas de dados após o cabeçalho
-        if not rows:
-             return pd.DataFrame(columns=headers) # Retorna DataFrame com colunas mas sem linhas
-        return pd.DataFrame(rows, columns=headers)
+        
+        if not headers: 
+             st.warning(f"A aba '{worksheet_name}' em {spreadsheet_url} não contém cabeçalhos.")
+             return pd.DataFrame()
+
+        processed_rows = []
+        num_headers = len(headers)
+        for row in rows:
+            # Ensure each row has the same number of elements as headers, padding with None if necessary
+            row_len = len(row)
+            if row_len < num_headers:
+                processed_rows.append(row + [None] * (num_headers - row_len))
+            elif row_len > num_headers:
+                processed_rows.append(row[:num_headers]) # Truncate if row is too long
+            else:
+                processed_rows.append(row)
+        
+        return pd.DataFrame(processed_rows, columns=headers)
     except Exception as e:
         st.error(f"Erro ao converter a aba '{worksheet_name}' para DataFrame: {e}")
         return None
@@ -84,102 +98,63 @@ def write_dataframe_to_sheet(url, worksheet_name, dataframe):
     worksheet = get_worksheet(url, worksheet_name)
     if worksheet:
         try:
-            worksheet.clear() # Limpa a planilha existente
+            worksheet.clear() 
             
             headers = dataframe.columns.tolist()
-            worksheet.update([headers] + dataframe.values.tolist()) # Mais eficiente para escrita em lote
-            st.success(f"DataFrame escrito com sucesso na aba '{worksheet_name}'.")
+            # worksheet.update([headers] + dataframe.values.tolist()) # gspread v5+
+            # For older gspread or to be safe:
+            worksheet.update_cells(gspread.utils.fill_gaps(worksheet.range(1,1,len(dataframe.index)+1,len(headers))),[headers] + dataframe.values.tolist())
+
             return True
         except Exception as e:
             st.error(f"Erro ao escrever DataFrame na aba '{worksheet_name}': {e}")
             return False
     return False
 
-def append_row_to_sheet(url, worksheet_name, row_data):
+def append_row_to_sheet(url, worksheet_name, row_data_list):
     """Adiciona uma nova linha (lista de valores) ao final de uma aba."""
     worksheet = get_worksheet(url, worksheet_name)
     if worksheet:
         try:
-            worksheet.append_row(row_data)
-            # st.success(f"Linha adicionada com sucesso à aba '{worksheet_name}'.") # Pode ser verboso demais
+            worksheet.append_row(row_data_list)
             return True
         except Exception as e:
             st.error(f"Erro ao adicionar linha na aba '{worksheet_name}': {e}")
             return False
     return False
 
-def update_row_in_sheet(url, worksheet_name, row_index_gspread, new_values_list):
+def update_cell_in_sheet(url, worksheet_name, df_reference_for_headers, row_index_df, col_name_df, new_value):
     """
-    Atualiza uma linha específica na planilha.
-    row_index_gspread é 1-based (primeira linha da planilha é 1).
-    new_values_list é uma lista de valores para a linha.
-    """
-    worksheet = get_worksheet(url, worksheet_name)
-    if worksheet:
-        try:
-            # Cria uma lista de células para atualizar em lote
-            cell_list_to_update = []
-            for col, value in enumerate(new_values_list, start=1):
-                cell = gspread.Cell(row=row_index_gspread, col=col, value=value)
-                cell_list_to_update.append(cell)
-            
-            if cell_list_to_update:
-                worksheet.update_cells(cell_list_to_update)
-                # st.success(f"Linha {row_index_gspread} atualizada com sucesso na aba '{worksheet_name}'.")
-                return True
-            else:
-                st.warning("Nenhum valor fornecido para atualizar a linha.")
-                return False
-        except Exception as e:
-            st.error(f"Erro ao atualizar a linha {row_index_gspread} na aba '{worksheet_name}': {e}")
-            return False
-    return False
-
-def update_1st_aval_column(url, worksheet_name, row_identifier_value, key_column_name, new_value):
-    """
-    Atualiza a coluna '1º Avaliação' de uma linha específica, identificada por um valor
-    em uma coluna chave.
-
-    :param url: URL da planilha Google Sheets.
-    :param worksheet_name: Nome da aba da planilha.
-    :param row_identifier_value: Valor na coluna chave que identifica a linha.
-    :param key_column_name: Nome da coluna chave (ex: 'Descrição Meta', 'ID').
-    :param new_value: Novo valor para a coluna '1º Avaliação'.
+    Atualiza uma célula específica na planilha.
+    row_index_df é o índice 0-based do DataFrame.
+    col_name_df é o nome da coluna no DataFrame.
+    df_reference_for_headers é um DataFrame que possui os cabeçalhos corretos para encontrar o índice da coluna.
     """
     worksheet = get_worksheet(url, worksheet_name)
-    if worksheet:
-        try:
-            data = worksheet.get_all_records() # Retorna lista de dicionários
-            if not data:
-                st.warning(f"Nenhum dado encontrado na aba '{worksheet_name}' para procurar por '{row_identifier_value}'.")
-                return False
+    if not worksheet:
+        st.error(f"Não foi possível obter a aba '{worksheet_name}' para atualização.")
+        return False
 
-            header_list = list(data[0].keys()) # Pega os cabeçalhos da primeira linha de dados (dict keys)
-            
-            if key_column_name not in header_list:
-                st.error(f"Coluna chave '{key_column_name}' não encontrada nos cabeçalhos da planilha: {header_list}")
-                return False
-            if '1º Avaliação' not in header_list:
-                st.error(f"Coluna '1º Avaliação' não encontrada nos cabeçalhos da planilha: {header_list}")
-                return False
-
-            target_col_index_gspread = header_list.index('1º Avaliação') + 1 # +1 para ser 1-based
-
-            found = False
-            for i, row_dict in enumerate(data, start=2): # start=2 porque get_all_records ignora cabeçalho, e gspread é 1-based para linhas
-                if str(row_dict.get(key_column_name)) == str(row_identifier_value):
-                    worksheet.update_cell(i, target_col_index_gspread, new_value)
-                    st.info(f"Coluna '1º Avaliação' atualizada para '{new_value}' na linha {i} (identificador '{row_identifier_value}').")
-                    found = True
-                    break # Assume que o identificador é único
-            
-            if not found:
-                st.warning(f"Identificador '{row_identifier_value}' (valor) na coluna '{key_column_name}' não encontrado na aba '{worksheet_name}'.")
-                return False
-            return True
-        except Exception as e:
-            st.error(f"Erro ao atualizar '1º Avaliação' para o identificador '{row_identifier_value}': {e}")
+    try:
+        # Converte o índice do DataFrame (0-based) para o índice da linha do gspread (1-based, +1 para cabeçalho)
+        gspread_row_index = int(row_index_df) + 2 
+        
+        # Encontra o índice da coluna no gspread (1-based)
+        if df_reference_for_headers is None or df_reference_for_headers.columns is None:
+            st.error("DataFrame de referência para cabeçalhos é inválido.")
             return False
-    else:
-        # Mensagem de erro já dada por get_worksheet
+            
+        headers = df_reference_for_headers.columns.tolist()
+        if col_name_df not in headers:
+            st.error(f"Coluna '{col_name_df}' não encontrada nos cabeçalhos: {headers}")
+            return False
+        gspread_col_index = headers.index(col_name_df) + 1
+
+        worksheet.update_cell(gspread_row_index, gspread_col_index, str(new_value) if new_value is not None else "") # Convert to string to avoid gspread issues with types
+        return True
+    except ValueError: 
+        st.error(f"Índice da linha inválido: {row_index_df}")
+        return False
+    except Exception as e:
+        st.error(f"Erro ao atualizar célula (linha_gspread:{gspread_row_index}, col_gspread:{gspread_col_index}) na aba '{worksheet_name}': {e}")
         return False
